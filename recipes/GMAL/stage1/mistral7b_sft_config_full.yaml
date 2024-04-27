@@ -8,7 +8,7 @@ chat_template: "{% for message in messages %}\n{% if message['role'] == 'user' %
 dataset_mixer:
   2A2I-R/AOT-v1: 0.1
 dataset_splits:
-- train_sft
+- train
 preprocessing_num_workers: 12
 
 # SFT trainer config
