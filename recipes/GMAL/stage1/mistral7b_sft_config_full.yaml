@@ -9,6 +9,7 @@ dataset_mixer:
   2A2I-R/AOT-v1: 0.1
 dataset_splits:
 - train
+- test
 preprocessing_num_workers: 12
 
 # SFT trainer config
