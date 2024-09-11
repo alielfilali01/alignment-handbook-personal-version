@@ -1,4 +1,3 @@
-
 # Scripts to Train and Evaluate Chat Models
 
 ## Fine-tuning
@@ -8,6 +7,7 @@ In the handbook, we provide three main ways to align LLMs for chat:
 - Full fine-tuning on a multi-GPU machine with DeepSpeed ZeRO-3 (tested on an 8 x A100 (80GB) node).
 - LoRA or QLoRA fine-tuning on a single consumer 24GB GPU (tested on an RTX 4090).
 - LoRA fine-tuning on a multi-GPU machine with DeepSpeed ZeRO-3 (tested on a 2 x A100s (80GB)).
+- QLoRA fine-tuning on multi-GPU machine with FSDP (tested on a 2 x A6000s (48GB)).
 
 In practice, we find comparable performance for both full and QLoRA fine-tuning, with the latter having the advantage of producing small adapter weights that are fast to upload and download from the Hugging Face Hub. Here are the general commands to fine-tune your models:
 
@@ -23,9 +23,18 @@ ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_con
 
 # LoRA training with ZeRO-3 on two or more GPUs
 ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/deepspeed_zero3.yaml --num_processes={num_gpus} scripts/run_{task}.py recipes/{model_name}/{task}/config_qlora.yaml --load_in_4bit=false
+
+# QLoRA training with FSDP on two or more GPUs
+ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/fsdp+qlora.yaml --num_processes={num_gpus} scripts/run_{task}.py recipes/{model_name}/{task}/config_qlora.yaml --torch_dtype=bfloat16 --bnb_4bit_quant_storage=bfloat16
 ```
 
-Here `{task}` refers to the type of training you wish to run. Currently the following tasks are supported: continued pretraining `cpt`, supervised finetuning `sft`, and direct preference optimisation `dpo`. Note that `cpt` is only present in the `gpt-nl` example recipe. {model_name}` refers to the choice of a recipe in the `recipes` directory. For example, to replicate Zephyr-7B-β you can run:
+Here `{task}` refers to the type of training you wish to run. Currently, the following tasks are supported:
+* continued pretraining `cpt` (note that `cpt` is only present in the `gpt-nl` example recipe)
+* supervised finetuning `sft`
+* direct preference optimisation `dpo`
+* odds ratio preference optimisation `orpo`
+
+`{model_name}` refers to the choice of a recipe in the `recipes` directory. For example, to replicate Zephyr-7B-β you can run:
 
 ```shell
 # Step 1 - train SFT policy
@@ -45,8 +54,7 @@ ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_con
 ```
 
 ## Logging with Weights and Biases
-
-By default all training metrics are logged with TensorBoard. If you have a [Weights and Biases](https://wandb.ai/site) account and are logged in, you can view the training metrics by appending `--report_to=wandb`, e.g.
+By default, all training metrics are logged with TensorBoard. If you have a [Weights and Biases](https://wandb.ai/site) account and are logged in, you can view the training metrics by appending `--report_to=wandb`, e.g.
 
 ```shell
 ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/deepspeed_zero3.yaml scripts/run_{task}.py recipes/{model_name}/{task}/config_full.yaml --report_to=wandb
@@ -85,14 +93,14 @@ dataset_splits:
 - test_xxx          # The test splits to mix
 ```
 
-If you want to fine-tune on your datasets, the main thing to keep in mind is how the chat templates are applied to the dataset blend. Since each task (SFT, DPO, etc), requires a different format, we assume the datasets have the following columns:
+If you want to fine-tune on your datasets, the main thing to keep in mind is how the chat templates are applied to the dataset blend. Since each task (SFT, DPO, ORPO, etc), requires a different format, we assume the datasets have the following columns:
 
 **SFT**
 
 * `messages`: A list of `dicts` in the form `{"role": "{role}", "content": {content}}`. 
 * See [ultrachat_200k](https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k) for an example.
 
-**DPO**
+**DPO and ORPO**
 
 * `chosen`: A list of `dicts` in the form `{"role": "{role}", "content": {content}}` corresponding to the preferred dialogue.
 * `rejected`: A list of `dicts` in the form `{"role": "{role}", "content": {content}}` corresponding to the dispreferred dialogue.
@@ -111,7 +119,7 @@ If you format your dataset in the same way, our training scripts should work out
 We recommend benchmarking chat models on:
 
 * [MT-Bench](https://huggingface.co/spaces/lmsys/mt-bench): a multi-turn benchmark spanning 80 dialogues and 10 domains.
-* [AlpacaEval](https://github.com/tatsu-lab/alpaca_eval): a single-turn benchmark which evaluates the helpfulness of chat and instruct models against `text-davinci-003`.
+* [AlpacaEval](https://github.com/tatsu-lab/alpaca_eval): a single-turn benchmark that evaluates the helpfulness of chat and instruct models against `text-davinci-003`.
 
 For both benchmarks, we have added support for the [Zephyr chat template](https://huggingface.co/alignment-handbook/zephyr-7b-sft-full/blob/ac6e600eefcce74f5e8bae1035d4f66019e93190/tokenizer_config.json#L30) (which is the default produced by our scripts), so you can evaluate models produced by our scripts as follows:
 
@@ -128,6 +136,6 @@ For both benchmarks, we have added support for the [Zephyr chat template](https:
   * Next, update the [config name](https://github.com/tatsu-lab/alpaca_eval/blob/2daa6e11b194653043ca74f735728dc068e04aae/src/alpaca_eval/models_configs/zephyr-7b-beta/configs.yaml#L1) and [Hub model ID](https://github.com/tatsu-lab/alpaca_eval/blob/2daa6e11b194653043ca74f735728dc068e04aae/src/alpaca_eval/models_configs/zephyr-7b-beta/configs.yaml#L5) to match your model name.
 * Follow the steps to evaluate your model [here](https://github.com/tatsu-lab/alpaca_eval/tree/main#evaluating-a-model).
 
-Note that MT-Bench and AlpacaEval rely on LLMs like GPT-4 to judge the quality of the model responses, and thus the ranking exhibit various biases including a preference for models distilled from GPTs. For that reason, we also recommend submitting your best models for human evaluation in:
+Note that MT-Bench and AlpacaEval rely on LLMs like GPT-4 to judge the quality of the model responses, and thus the ranking exhibits various biases including a preference for models distilled from GPTs. For that reason, we also recommend submitting your best models for human evaluation in:
 
 * [Chatbot Arena](https://chat.lmsys.org): a live, human evaluation of chat models in head-to-head comparisons.
